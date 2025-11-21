@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Optional, Dict, List, Any
 import xml.etree.ElementTree as ET
 from xyz_flask_integration import xyz_bp
+from sap_data_extraction import SAPDataExtractor
 
 app = Flask(__name__)
 app.register_blueprint(xyz_bp)
@@ -1075,6 +1076,139 @@ discovery_results = {}
 app.config['SAP_CLIENT'] = sap_client
 
 
+# ============================================================================
+# ENHANCED DATA EXTRACTION ENDPOINTS
+# ============================================================================
+
+@app.route('/api/data-extraction/sales-quantity', methods=['POST'])
+@error_handler
+def extract_sales_quantity():
+    """
+    Extract actual sales quantity from planning data service with proper date filtering
+
+    Request body:
+    {
+        "key_figure": "SALES_QUANTITY",
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "product_filter": "PRODUCT_001",
+        "location_filter": "LOC_A",
+        "top": 10000,
+        "skip": 0
+    }
+    """
+    data = request.get_json()
+
+    key_figure = data.get('key_figure')
+    start_date = data.get('start_date')
+    end_date = data.get('end_date')
+    product_filter = data.get('product_filter')
+    location_filter = data.get('location_filter')
+    top = data.get('top', 10000)
+    skip = data.get('skip', 0)
+
+    if not key_figure:
+        return jsonify({'error': 'key_figure parameter is required'}), 400
+
+    result = SAPDataExtractor.extract_sales_quantity_with_dates(
+        key_figure=key_figure,
+        start_date=start_date,
+        end_date=end_date,
+        product_filter=product_filter,
+        location_filter=location_filter,
+        top=top,
+        skip=skip
+    )
+
+    return jsonify(result)
+
+
+@app.route('/api/data-extraction/version-specific-master-data', methods=['POST'])
+@error_handler
+def extract_version_specific_master_data():
+    """
+    Extract version-specific master data using PlanningAreaID and VersionID
+
+    Request body:
+    {
+        "master_data_type_id": "CUSTOMER",
+        "planning_area_id": "SAPIBP1",
+        "version_id": "UPSIDE",
+        "use_baseline": false
+    }
+    """
+    data = request.get_json()
+
+    master_data_type_id = data.get('master_data_type_id')
+    planning_area_id = data.get('planning_area_id')
+    version_id = data.get('version_id')
+    use_baseline = data.get('use_baseline', False)
+
+    result = SAPDataExtractor.extract_version_specific_master_data(
+        master_data_type_id=master_data_type_id,
+        planning_area_id=planning_area_id,
+        version_id=version_id,
+        use_baseline=use_baseline
+    )
+
+    return jsonify(result)
+
+
+@app.route('/api/data-extraction/sales-quantity-by-product', methods=['POST'])
+@error_handler
+def extract_sales_quantity_by_product():
+    """
+    Extract sales quantity for specific products (returns as arrays for segmentation)
+
+    Request body:
+    {
+        "key_figure": "SALES_QUANTITY",
+        "product_ids": ["PRODUCT_001", "PRODUCT_002"],
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31"
+    }
+    """
+    data = request.get_json()
+
+    key_figure = data.get('key_figure')
+    product_ids = data.get('product_ids', [])
+    start_date = data.get('start_date')
+    end_date = data.get('end_date')
+
+    if not key_figure:
+        return jsonify({'error': 'key_figure parameter is required'}), 400
+
+    try:
+        items_arrays = SAPDataExtractor.extract_sales_quantity_by_product(
+            key_figure=key_figure,
+            product_ids=product_ids,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        return jsonify({
+            'status': 'success',
+            'key_figure': key_figure,
+            'items': {
+                product_id: array.tolist()
+                for product_id, array in items_arrays.items()
+            },
+            'summary': {
+                'total_products': len(items_arrays),
+                'date_range': {
+                    'start': start_date,
+                    'end': end_date
+                }
+            },
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+
 if __name__ == '__main__':
     print("\n" + "="*80)
     print("SAP IBP Master Data API - Flask Backend Started")
@@ -1090,6 +1224,10 @@ if __name__ == '__main__':
     print("  - GET  http://localhost:5000/health")
     print("  - GET  http://localhost:5000/api/products")
     print("  - GET  http://localhost:5000/api/master-data/<TYPE>/extract")
+    print("\nENHANCED DATA EXTRACTION ENDPOINTS:")
+    print("  - POST http://localhost:5000/api/data-extraction/sales-quantity")
+    print("  - POST http://localhost:5000/api/data-extraction/version-specific-master-data")
+    print("  - POST http://localhost:5000/api/data-extraction/sales-quantity-by-product")
     print("\nXYZ SEGMENTATION ENDPOINTS:")
     print("  - POST http://localhost:5000/api/xyz-segmentation/classify")
     print("  - POST http://localhost:5000/api/xyz-segmentation/classify-from-sap")
